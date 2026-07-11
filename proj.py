@@ -37,8 +37,14 @@ app.add_middleware(
 
 
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
 class user_question_type(BaseModel):
     question: str
+    namespace: str
+    history: List[ChatMessage] = []
 
 class ChatResponse(BaseModel):
     response: str   
@@ -69,16 +75,16 @@ def call_groq(messages, temperature=0.2, max_tokens=1000):
     )
 
 
-@app.post("/get_todos/", status_code=200)
-def chat(user_question:user_question_type):
+@app.post("/chat/", status_code=200)
+def chat(user_question: user_question_type):
     try:
         
 
-        query_vector=embed_texts([user_question.question], input_type="question")[0]
+        query_vector=embed_texts([user_question.question], input_type="query")[0]
             
         results = index.query(
             vector=query_vector,
-            namespace=req.namespace,
+            namespace=user_question.namespace,
             top_k=4,
             include_metadata=True,
             )
@@ -104,9 +110,9 @@ def chat(user_question:user_question_type):
         )
 
         messages = [{"role": "system", "content": system_prompt}]
-        for h in req.history:
+        for h in user_question.history:
             messages.append({"role": h.role, "content": h.content})
-        messages.append({"role": "user", "content": req.query})
+        messages.append({"role": "user", "content": user_question.query})
 
         full_prompt = " ".join([m["content"] for m in messages])
         num_tokens = len(encoding.encode(full_prompt))
@@ -123,8 +129,9 @@ def chat(user_question:user_question_type):
     except httpx.RequestError as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-class file_type:
-    file: str
+class file_type(BaseModel):
+    namespace: str
+    file_url: str
 
 class ProcessResponse(BaseModel):
     status: str
@@ -143,7 +150,7 @@ async def save_pinecone_namespace(req:file_type):
 
                 print("Starting processing for namespace:", req.namespace)
 
-                resp = requests.get(req.file_url)
+                resp = await client.get(req.file_url)
                 resp.raise_for_status()
                 print("PDF downloaded")
 
@@ -173,7 +180,7 @@ async def save_pinecone_namespace(req:file_type):
 
                 NODE_URL = os.getenv("NODE_SERVICE_URL", f"http://localhost:{PORT}")
 
-                callback = requests.post(f"{NODE_URL}/api/documents/status",
+                callback = await client.post(f"{NODE_URL}/api/documents/status",
                     json={"namespace": req.namespace, "status": "ready"})
                 print("Callback status:", callback.status_code)
 
@@ -202,20 +209,19 @@ async def delete_pinecone_namespace(namespace: str):
 
 class complete_request(BaseModel):
     namespace: str
+    status: str
 
 @app.post("/complete/", status_code=200)
-async def complete(req:complete_request):
-    return complete(req.namespace)
-    
-
+async def complete(req: complete_request):
+    return {"namespace": req.namespace, "status": req.status}
 
 
 
 @app.get("/generate_quiz/", status_code=200)
-def generate_quiz(req:dict):
+def generate_quiz(namespace:str):
     try:
-        namespace=req.get("namespace")
-        query_vector=embed_texts(["generate a quiz"], input_type="question")[0]
+        
+        query_vector=embed_texts(["generate a quiz"], input_type="query")[0]
             
         results = index.query(
             vector=query_vector,
@@ -253,7 +259,7 @@ def generate_quiz(req:dict):
 
 
         response = call_groq(
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role": "user", "content": system_prompt}],
         temperature=0.7,
         max_tokens=1500
     )
