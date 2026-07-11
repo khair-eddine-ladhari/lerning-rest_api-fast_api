@@ -1,12 +1,20 @@
+"""
+Sets up the ReAct agent (reasoning + tool use) and a sequential chain
+that formats the agent's raw findings into a polished report.
+"""
 import os
-from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langgraph.prebuilt import create_react_agent
 
 from tools import all_tools
 
-llm = ChatOpenAI(model="gpt-4o-mini", api_key=os.getenv("OPENAI_API_KEY"), temperature=0)
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    api_key=os.getenv("GROQ_API_KEY"),
+    temperature=0,
+)
 
 FINANCIAL_AGENT_SYSTEM_PROMPT = """You are a financial research analyst assistant with access to the following tools:
 
@@ -48,9 +56,11 @@ def run_financial_analysis(question: str) -> dict:
     Full pipeline: agent gathers findings using tools it decides to call,
     then the sequential chain formats those findings into a final report.
     """
+    # Run the agent -- it will call whichever tools it thinks are relevant
     agent_result = agent.invoke({"messages": [("human", question)]})
     raw_findings = agent_result["messages"][-1].content
 
+    # Format the raw findings into a polished report
     final_report = report_chain.invoke({"findings": raw_findings})
 
     return {
